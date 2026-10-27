@@ -25,9 +25,8 @@ FERA is a web application where users can discover and explore real wildlife fro
 | 3. Protect your keys | ✅ Done. `.claude/settings.json` deny rule + `.gitignore` for `.env*` |
 | 4. Add sign-in with Clerk | ✅ Done. See "Authentication (Step 4)" below |
 | 5. Add Supabase and connect it to Clerk | ✅ Done. See "Database & Supabase (Step 5)" below |
-| 6–8 | Not started |
-
-No iNaturalist features exist yet. Saving items from the UI is not built yet (needs the API features).
+| 6. Where to call the API + core features | ✅ Done. See "iNaturalist Integration & App (Step 6)" below. Owner manually tested auth, exploring, saving (hearts + buttons), notes, removing, and persistence: all passed |
+| 7–8 | Not started |
 
 ## Decisions Made (Step 2)
 
@@ -278,6 +277,29 @@ Notes:
 - **App:** `/discoveries` signed in loads counts from Supabase without errors; signed out, it redirects to sign-in.
 - **Advisors:** security and performance advisors both report **no issues** (after migration 2). Before it, `auth_rls_initplan` flagged all 8 policies (a text-pattern false positive; EXPLAIN already showed an InitPlan) and lints 0028/0029 flagged `public.rls_auto_enable()` as callable by `anon`/`authenticated`.
 - **After migration 2, re-verified:** policies unchanged in effect; EXPLAIN still shows InitPlan + index scan for select/update/delete on both tables; auto-RLS still enables RLS on a new `public` table (tested in a rolled-back transaction); `rls_auto_enable()` → permission denied for `anon` and signed-in users; simulated and real-token tests above all re-run with the same results; 0 rows left in either table.
+
+## iNaturalist Integration & App (Step 6)
+
+**Decisions (owner-approved):** all iNaturalist calls happen on the **server**; visual direction **"Living Atlas"** (dark, photo-first, large uppercase type, amber `#f2b84b` accent; tokens in `app/globals.css`). Search is limited to **animals** (`taxon_id=1`), per FERA's concept.
+
+- `lib/inaturalist.ts` (server only): `inatGet` is `'use cache'` + `cacheLife('minutes')`, 8 s timeout, keeps only the fields FERA uses. Every public function returns `{status: "ok" | "not_found" | "unavailable"}`. Errors are not cached. `parseId` validates IDs; queries must be 2–60 chars. `INAT_API_BASE` (shell variable, not an env file) can point at a dead host to test the unavailable state.
+- `app/actions.ts` (Server Actions): `saveSpecies`, `saveObservation`, `removeSaved`, `updateNote`. Each calls `auth.protect()`, validates, builds the snapshot **from iNaturalist on the server** (the browser sends only an ID), and writes with `createServerSupabaseClient()` (Clerk token → RLS). Never sends `user_id`. Duplicate save (`23505`) counts as success. Then `refresh()`.
+- Routes: `/` (hero = latest sighting, groups, recent sightings), `/search?q=`, `/explore/[group]` (8 animal groups in `lib/groups.ts`), `/species/[id]`, `/observations/[id]`, `/discoveries` (protected; tabs `?tab=sightings`; notes + remove; reads only Supabase so it works when iNaturalist is down), `not-found.tsx`.
+- States (`components/states.tsx`): skeleton loading inside `<Suspense>`; `EmptyState` with tips for nothing found / too short / empty query; `ApiUnavailable` with **Try again** (router refresh) and a link to My Discoveries.
+- Data rules: always show photo attribution; obscured/private locations are labelled "Approximate" and coordinates are never shown; images use `next/image` with `unoptimized` (iNaturalist already serves sized images).
+- Request flow diagram: `docs/REQUEST_FLOW.md`.
+
+### UX refinements (from instructor feedback: self-explanatory flow, clear signals, simple terminology)
+
+Owner decisions: say **"Animals"** (not "Species") in all user-facing text (code, routes like `/species/[id]`, and tables keep the technical names); keep **"My Discoveries"**; add quick-save hearts on cards.
+
+- **Terminology:** *Animal* = a kind of animal; *Sighting* = one photo someone took, in one place, on one day. Cards carry an `ANIMAL` / `SIGHTING` chip; detail pages open with a one-line description; `rankLabel()` in `lib/groups.ts` replaces jargon ("Rank", "subspecies"). Conservation status only shows when it exists.
+- **Navigation:** breadcrumbs on animal, sighting, and group pages (`components/breadcrumbs.tsx`); header search on every page except Home/Search (`components/header-search.tsx`; an icon link on phones); header "My Discoveries" has a heart and a saved count (`components/discoveries-link.tsx`); Discoveries has a "Keep exploring" link; sighting page has a primary "See everything about {animal}" button.
+- **Saving (one pattern everywhere):** `components/use-save-toggle.ts` + `components/save-button.tsx`. Save is instant and shows a toast with a link to My Discoveries (`components/toast.tsx`, mounted in `app/layout.tsx`). Removing (from a heart, the detail button, or My Discoveries) always asks first, inline ("Remove? Yes / No"), because it also deletes the private note; focus returns to the control afterwards, Escape cancels. Signed-out hearts open sign-in and return to the same page; detail pages say "Create a free account to save this animal".
+- **Saved state:** `lib/saved.ts` `getSavedIds()` (React `cache()`, one lookup per request, RLS-scoped) feeds filled/empty hearts and the header count. It returns `null` when signed out. Lists call it inside `<Suspense>`.
+- **Photos render reliably:** `components/photo.tsx` (client) requests decode on load (loaded images could sit unpainted until a repaint), has a failure placeholder, and the first 8 cards load eagerly. Hero images use `components/hero-backdrop.tsx` (no negative z-index; visible base color; gradient for text contrast).
+- **Progressive disclosure:** animal summary shows 4 lines with "Read more" (`components/expandable-text.tsx`).
+- **Accessibility:** hearts and controls are at least 44px tall on touch; icon-only buttons have `aria-label`s; toast region is `role="status"`; keyboard order is skip link, logo, auth, search, then each card link followed by its heart.
 
 ## API Notes (from Step 1)
 
