@@ -9,6 +9,8 @@ try {
 }
 
 const PORT = 3100; // not 3000, so it never collides with `npm run dev`
+// Set E2E_BASE_URL (e.g. the Vercel URL) to run the same tests against a deployed site instead.
+const DEPLOYED_URL = process.env.E2E_BASE_URL;
 
 export default defineConfig({
   testDir: "./e2e",
@@ -19,17 +21,19 @@ export default defineConfig({
   timeout: 120_000,
   reporter: [["list"]],
   use: {
-    baseURL: `http://localhost:${PORT}`,
+    baseURL: DEPLOYED_URL ?? `http://localhost:${PORT}`,
     // Traces and videos record request headers, which would include real tokens.
     trace: "off",
     video: "off",
     screenshot: "only-on-failure",
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
-  webServer: {
-    command: `npm run build && npx next start -p ${PORT}`,
-    url: `http://localhost:${PORT}`,
-    reuseExistingServer: true,
-    timeout: 240_000,
-  },
+  webServer: DEPLOYED_URL
+    ? undefined
+    : {
+        command: `npm run build && npx next start -p ${PORT}`,
+        url: `http://localhost:${PORT}`,
+        reuseExistingServer: true,
+        timeout: 240_000,
+      },
 });

@@ -107,13 +107,19 @@ export function parseId(value: string | number | undefined | null): number | nul
 // Mapping (keep only what FERA uses)
 // ---------------------------------------------------------------------------
 
+// Data from iNaturalist is displayed as links and image sources, so accept only
+// http(s) URLs (never javascript:, data:, etc.).
+function safeHttpUrl(url: unknown): string | null {
+  return typeof url === "string" && /^https?:\/\//i.test(url) ? url : null;
+}
+
 function sized(url: string, size: "medium" | "large") {
   return url.replace(/\/(square|thumb|small|medium|large|original)\.(\w+)(\?.*)?$/, `/${size}.$2$3`);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toPhoto(p: any): Photo | null {
-  const url = p?.medium_url ?? p?.url;
+  const url = safeHttpUrl(p?.medium_url ?? p?.url);
   if (!url) return null;
   return {
     url: sized(url, "medium"),
@@ -190,7 +196,7 @@ export function getSpecies(id: number): Promise<InatResult<TaxonDetail>> {
       status: "ok",
       data: {
         ...toTaxonSummary(t),
-        wikipediaUrl: t.wikipedia_url ?? null,
+        wikipediaUrl: safeHttpUrl(t.wikipedia_url),
         summary: stripHtml(t.wikipedia_summary),
         conservationStatus: t.conservation_status?.status_name ?? null,
         extinct: Boolean(t.extinct),
