@@ -1,4 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
+import { connection } from "next/server";
 import { cache } from "react";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 
@@ -9,6 +10,9 @@ export type SavedIds = { species: Set<number>; observations: Set<number> };
 // queries to the caller's own rows. React's cache() makes this one lookup per
 // request, however many components ask. Call it inside <Suspense>.
 export const getSavedIds = cache(async (): Promise<SavedIds | null> => {
+  // Never read per-user data while Next.js is prerendering a cached page in the
+  // background: wait for a real request first.
+  await connection();
   const { isAuthenticated } = await auth();
   if (!isAuthenticated) return null;
 
