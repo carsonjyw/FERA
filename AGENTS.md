@@ -27,7 +27,7 @@ FERA is a web application where users can discover and explore real wildlife fro
 | 5. Add Supabase and connect it to Clerk | ✅ Done. See "Database & Supabase (Step 5)" below |
 | 6. Where to call the API + core features | ✅ Done. See "iNaturalist Integration & App (Step 6)" below. Owner manually tested auth, exploring, saving (hearts + buttons), notes, removing, and persistence: all passed |
 | 7. Playwright end-to-end test | ✅ Done. See "End-to-end tests (Step 7)" below and `docs/STEP_7_E2E_TESTING.md` |
-| 8 | Not started |
+| 8. Security review, deploy, submit | 🟡 Code, review and docs ready (see "Step 8" below). Waiting on the owner to merge to `main` and deploy on Vercel; production checks pending |
 
 ## Decisions Made (Step 2)
 
@@ -312,6 +312,14 @@ Full write-up with the actual results: `docs/STEP_7_E2E_TESTING.md`.
 - **RLS failure experiment:** runs only with `RLS_EXPERIMENT=1`, only against a DISPOSABLE table `rls_experiment_saved_species` (SQL in `e2e/sql/`, not a migration). Sequence performed: pass → weaken disposable policies to `using (true)` → test FAILED ("User B can see User A's rows") → restore → pass → drop table. **Never weaken RLS on `saved_species` or `saved_observations`.** Their security fingerprint was identical before and after.
 - **Rules:** no passwords in tests; no mocked auth; never commit emails, keys, or `test-results/` / `playwright-report/`; to repeat the experiment, recreate the disposable table with `e2e/sql/01-…`, run the sequence, and drop it with `04-…`.
 - `lib/saved.ts` calls `await connection()` first so per-user data is never read during a background prerender.
+
+## Step 8: security review, deployment, submission
+
+- **Security review:** `/security-review` was run on `step-8-deploy` (scope: diff vs `main`, i.e. Step 7 only, no findings), plus a manual full-app review and `npm audit` (0 vulnerabilities). Fixes: http(s)-only URLs from iNaturalist (`safeHttpUrl` in `lib/inaturalist.ts`), security headers in `next.config.ts`, `kind` validation in `app/actions.ts`. Details: `docs/SECURITY_REVIEW.md`.
+- **Docs:** `README.md` (professional README), `docs/DEPLOYMENT.md` (Vercel steps and production checks), `docs/PEER_USABILITY_TEST.md`, `docs/SUBMISSION.md` (submission packet and talking points).
+- **Deploy rules:** Vercel Hobby deploys `main`; the owner enters the four environment variables in Vercel themselves (`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`). Never set `INAT_API_BASE` in production. Never put secrets in chat, code or commits. Clerk stays on development keys (course requirement).
+- **Production test:** `E2E_BASE_URL=<live-url> E2E_USER_A_EMAIL=<a> E2E_USER_B_EMAIL=<b> npx playwright test` runs the same two-user test against the live site (no local server is started when `E2E_BASE_URL` is set).
+- **Do not** change the schema or RLS policies unless a real security issue requires it.
 
 ## API Notes (from Step 1)
 

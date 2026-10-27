@@ -13,6 +13,10 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
+type Kind = "species" | "observation";
+// Arguments of a Server Action come from the browser and are untrusted.
+const isKind = (value: unknown): value is Kind => value === "species" || value === "observation";
+
 const UNIQUE_VIOLATION = "23505";
 const MAX_NOTE = 2000;
 
@@ -70,8 +74,9 @@ export async function saveObservation(rawId: number): Promise<ActionResult> {
   return { ok: true };
 }
 
-export async function removeSaved(kind: "species" | "observation", rawId: number): Promise<ActionResult> {
+export async function removeSaved(kind: Kind, rawId: number): Promise<ActionResult> {
   await auth.protect();
+  if (!isKind(kind)) return { ok: false, error: "That item type isn't valid." };
   const id = parseId(rawId);
   if (!id) return { ok: false, error: "That item ID isn't valid." };
 
@@ -88,12 +93,9 @@ export async function removeSaved(kind: "species" | "observation", rawId: number
   return { ok: true };
 }
 
-export async function updateNote(
-  kind: "species" | "observation",
-  rawId: number,
-  rawNote: string,
-): Promise<ActionResult> {
+export async function updateNote(kind: Kind, rawId: number, rawNote: string): Promise<ActionResult> {
   await auth.protect();
+  if (!isKind(kind)) return { ok: false, error: "That item type isn't valid." };
   const id = parseId(rawId);
   if (!id) return { ok: false, error: "That item ID isn't valid." };
   const note = String(rawNote ?? "").trim();
