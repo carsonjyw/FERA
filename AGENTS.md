@@ -24,9 +24,10 @@ FERA is a web application where users can discover and explore real wildlife fro
 | 2. Plan the data | ✅ Done. Data model below |
 | 3. Protect your keys | ✅ Done. `.claude/settings.json` deny rule + `.gitignore` for `.env*` |
 | 4. Add sign-in with Clerk | ✅ Done. See "Authentication (Step 4)" below |
-| 5–8 | Not started |
+| 5. Add Supabase and connect it to Clerk | ✅ Done. See "Database & Supabase (Step 5)" below |
+| 6–8 | Not started |
 
-No Supabase project, database tables, or iNaturalist features exist yet.
+No iNaturalist features exist yet. Saving items from the UI is not built yet (needs the API features).
 
 ## Decisions Made (Step 2)
 
@@ -184,23 +185,39 @@ Plain-text version:
 4. On insert, `user_id` defaults to `auth.jwt()->>'sub'`, so the database fills in the owner. The client should not send `user_id`. If it does, the RLS insert check rejects any value that isn't the signed-in user's own ID.
 5. `user_id` is `text`, not `uuid`, because Clerk IDs are not UUIDs.
 
-## Planned Row-Level Security (RLS)
+## Row-Level Security (RLS) and Privileges
 
-RLS will be **enabled on both tables**. With RLS on and no matching policy, access is denied. That means signed-out visitors (no valid Clerk token) can read nothing.
+Implemented in `supabase/migrations/20261027200419_create_saved_tables.sql` (Step 5).
+
+RLS is **enabled on both tables**. With RLS on and no matching policy, access is denied.
+
+### Privileges (table grants)
+
+The project does not auto-expose new tables, so the migration grants explicitly:
+
+| Role | Privileges |
+|---|---|
+| `anon` (signed out) | **None** (all revoked, including the default `TRUNCATE`) |
+| `authenticated` | `SELECT`, `INSERT`, `DELETE`; `UPDATE` on the **`note` column only** |
+
+`TRUNCATE` is never granted because it ignores RLS. Updating any column other than `note` (including `user_id`) fails with "permission denied".
+
+### Policies
 
 The same four policies apply to `saved_species` and `saved_observations`, all for the `authenticated` role:
 
-| Operation | Policy (plain words) | Check |
+| Operation | Policy name (saved_species / saved_observations) | Check |
 |---|---|---|
-| **SELECT** | You can read only your own rows | `USING ((auth.jwt()->>'sub') = user_id)` |
-| **INSERT** | You can add rows only as yourself | `WITH CHECK ((auth.jwt()->>'sub') = user_id)` |
-| **UPDATE** | You can edit only your own rows (in practice, the `note`), and can't hand a row to someone else | `USING ((auth.jwt()->>'sub') = user_id)` and `WITH CHECK ((auth.jwt()->>'sub') = user_id)` |
-| **DELETE** | You can remove (unsave) only your own rows | `USING ((auth.jwt()->>'sub') = user_id)` |
+| **SELECT** | Users can view their own saved species / observations | `USING ((select auth.jwt()->>'sub') = user_id)` |
+| **INSERT** | Users can save species / observations as themselves | `WITH CHECK ((select auth.jwt()->>'sub') = user_id)` |
+| **UPDATE** | Users can update their own saved species / observations | `USING (…)` and `WITH CHECK (…)`, same expression |
+| **DELETE** | Users can delete their own saved species / observations | `USING ((select auth.jwt()->>'sub') = user_id)` |
 
 Notes:
 - `USING` filters which existing rows a query can see or touch. `WITH CHECK` validates the new or changed row.
-- No policies are granted to the `anon` role.
-- Tables and policies will be created as **migrations** in Step 5. Nothing is created yet.
+- `(select auth.jwt()->>'sub')` is evaluated once per query (an InitPlan), not per row.
+- No policies exist for `anon`.
+- To change the schema or policies, add a **new** migration file; never edit an applied one.
 
 ## How the Model Supports the App
 
@@ -234,6 +251,30 @@ Notes:
 - Because of streaming, a signed-out request to a protected page returns HTTP 200 with a client-side redirect to sign-in (not a 307). The body contains no protected content.
 - The header (`app/layout.tsx`) uses `<Show when="signed-out">` / `<Show when="signed-in">`: Sign in / Sign up when signed out; My Discoveries, Sign out, and `<UserButton />` when signed in.
 - Clerk only controls who reaches pages. Database-level protection (RLS) arrives in Step 5.
+
+## Database & Supabase (Step 5)
+
+- **Supabase project:** `imecgakouqidfgjndkep` (`https://imecgakouqidfgjndkep.supabase.co`). The agent uses the Supabase MCP server scoped to this project (`.mcp.json`, no secrets in it).
+- **Clerk ↔ Supabase:** Supabase **Third-Party Auth** with Clerk (Clerk domain `working-horse-868.clerk.accounts.dev`). Clerk session tokens carry `role: "authenticated"` and `sub` = Clerk user ID. Supabase verifies them against Clerk's public keys. Do **not** use the deprecated Clerk JWT templates / shared JWT secret.
+- **Env variables** (owner-managed in `.env.local`): `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. The app never uses the Supabase secret key (it bypasses RLS).
+- **Migrations:** `supabase/migrations/`. Applied through the Supabase MCP `apply_migration`; the file name matches the applied version.
+
+### Supabase clients
+
+| File | Use in | How it authenticates |
+|---|---|---|
+| `lib/supabase/server.ts` → `createServerSupabaseClient()` | Server Components, Route Handlers, Server Actions | `accessToken` returns `(await auth()).getToken()` (Clerk server) |
+| `lib/supabase/client.ts` → `useSupabaseClient()` | Client Components | `accessToken` returns `session?.getToken()` (Clerk `useSession`) |
+
+- Do not filter by `user_id` for security; RLS already limits results to the signed-in user. Do not send `user_id` on insert; it defaults from the token.
+- `/discoveries` currently shows the counts of the user's saved species and sightings (read through the server client) and a generic error message if the query fails.
+
+### Verified in Step 5
+
+- **Simulated SQL tests** (as `authenticated` with fake `sub` claims and as `anon`, rolled back): own rows only; another user's rows can't be read, updated, or deleted (0 rows affected); inserting with another user's `user_id` → RLS violation; omitted `user_id` defaults to the caller; duplicate save → unique violation; updating non-`note` columns and `TRUNCATE` → permission denied; `anon` select/insert → permission denied.
+- **Real-token API tests** (a genuine Clerk session token via Supabase REST): select/insert/update-note/delete own rows succeed; spoofed `user_id` → 403; updating `common_name` → 403; no token → 401. Test row removed afterwards.
+- **App:** `/discoveries` signed in loads counts from Supabase without errors; signed out, it redirects to sign-in.
+- **Advisors:** performance lint `auth_rls_initplan` flags all 8 policies, but EXPLAIN shows an InitPlan, so it's a pattern-matching false positive. Security lint flags `public.rls_auto_enable()` (Supabase's auto-RLS event-trigger function, not part of FERA's migration).
 
 ## API Notes (from Step 1)
 
