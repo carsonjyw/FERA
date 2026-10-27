@@ -187,7 +187,7 @@ Plain-text version:
 
 ## Row-Level Security (RLS) and Privileges
 
-Implemented in `supabase/migrations/20261027200419_create_saved_tables.sql` (Step 5).
+Implemented in `supabase/migrations/20261027200419_create_saved_tables.sql`, with the policy expressions rewritten in `20261027201557_fix_advisor_warnings.sql` (Step 5).
 
 RLS is **enabled on both tables**. With RLS on and no matching policy, access is denied.
 
@@ -208,14 +208,14 @@ The same four policies apply to `saved_species` and `saved_observations`, all fo
 
 | Operation | Policy name (saved_species / saved_observations) | Check |
 |---|---|---|
-| **SELECT** | Users can view their own saved species / observations | `USING ((select auth.jwt()->>'sub') = user_id)` |
-| **INSERT** | Users can save species / observations as themselves | `WITH CHECK ((select auth.jwt()->>'sub') = user_id)` |
+| **SELECT** | Users can view their own saved species / observations | `USING (((select auth.jwt()) ->> 'sub') = user_id)` |
+| **INSERT** | Users can save species / observations as themselves | `WITH CHECK (((select auth.jwt()) ->> 'sub') = user_id)` |
 | **UPDATE** | Users can update their own saved species / observations | `USING (…)` and `WITH CHECK (…)`, same expression |
-| **DELETE** | Users can delete their own saved species / observations | `USING ((select auth.jwt()->>'sub') = user_id)` |
+| **DELETE** | Users can delete their own saved species / observations | `USING (((select auth.jwt()) ->> 'sub') = user_id)` |
 
 Notes:
 - `USING` filters which existing rows a query can see or touch. `WITH CHECK` validates the new or changed row.
-- `(select auth.jwt()->>'sub')` is evaluated once per query (an InitPlan), not per row.
+- `(select auth.jwt())` is evaluated once per query (an InitPlan), not per row, and the `UNIQUE (user_id, …)` indexes serve the filter. This form also satisfies Supabase's `auth_rls_initplan` lint.
 - No policies exist for `anon`.
 - To change the schema or policies, add a **new** migration file; never edit an applied one.
 
@@ -257,7 +257,9 @@ Notes:
 - **Supabase project:** `imecgakouqidfgjndkep` (`https://imecgakouqidfgjndkep.supabase.co`). The agent uses the Supabase MCP server scoped to this project (`.mcp.json`, no secrets in it).
 - **Clerk ↔ Supabase:** Supabase **Third-Party Auth** with Clerk (Clerk domain `working-horse-868.clerk.accounts.dev`). Clerk session tokens carry `role: "authenticated"` and `sub` = Clerk user ID. Supabase verifies them against Clerk's public keys. Do **not** use the deprecated Clerk JWT templates / shared JWT secret.
 - **Env variables** (owner-managed in `.env.local`): `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. The app never uses the Supabase secret key (it bypasses RLS).
-- **Migrations:** `supabase/migrations/`. Applied through the Supabase MCP `apply_migration`; the file name matches the applied version.
+- **Migrations** (`supabase/migrations/`, applied through the Supabase MCP `apply_migration`; each file name matches the version Supabase recorded):
+  1. `20261027200419_create_saved_tables.sql`: tables, grants, RLS, 8 policies.
+  2. `20261027201557_fix_advisor_warnings.sql`: same policies rewritten as `((select auth.jwt()) ->> 'sub')`; `revoke execute on function public.rls_auto_enable() from public, anon, authenticated` (Supabase's auto-RLS event-trigger function; the `ensure_rls` trigger still fires).
 
 ### Supabase clients
 
@@ -274,7 +276,8 @@ Notes:
 - **Simulated SQL tests** (as `authenticated` with fake `sub` claims and as `anon`, rolled back): own rows only; another user's rows can't be read, updated, or deleted (0 rows affected); inserting with another user's `user_id` → RLS violation; omitted `user_id` defaults to the caller; duplicate save → unique violation; updating non-`note` columns and `TRUNCATE` → permission denied; `anon` select/insert → permission denied.
 - **Real-token API tests** (a genuine Clerk session token via Supabase REST): select/insert/update-note/delete own rows succeed; spoofed `user_id` → 403; updating `common_name` → 403; no token → 401. Test row removed afterwards.
 - **App:** `/discoveries` signed in loads counts from Supabase without errors; signed out, it redirects to sign-in.
-- **Advisors:** performance lint `auth_rls_initplan` flags all 8 policies, but EXPLAIN shows an InitPlan, so it's a pattern-matching false positive. Security lint flags `public.rls_auto_enable()` (Supabase's auto-RLS event-trigger function, not part of FERA's migration).
+- **Advisors:** security and performance advisors both report **no issues** (after migration 2). Before it, `auth_rls_initplan` flagged all 8 policies (a text-pattern false positive; EXPLAIN already showed an InitPlan) and lints 0028/0029 flagged `public.rls_auto_enable()` as callable by `anon`/`authenticated`.
+- **After migration 2, re-verified:** policies unchanged in effect; EXPLAIN still shows InitPlan + index scan for select/update/delete on both tables; auto-RLS still enables RLS on a new `public` table (tested in a rolled-back transaction); `rls_auto_enable()` → permission denied for `anon` and signed-in users; simulated and real-token tests above all re-run with the same results; 0 rows left in either table.
 
 ## API Notes (from Step 1)
 
