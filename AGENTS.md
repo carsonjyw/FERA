@@ -22,9 +22,11 @@ FERA is a web application where users can discover and explore real wildlife fro
 |---|---|
 | 1. Choose tool and API | ✅ Done. See `STEP_1_API_EXPLORATION.md` |
 | 2. Plan the data | ✅ Done. Data model below |
-| 3–8 | Not started |
+| 3. Protect your keys | ✅ Done. `.claude/settings.json` deny rule + `.gitignore` for `.env*` |
+| 4. Add sign-in with Clerk | ✅ Done. See "Authentication (Step 4)" below |
+| 5–8 | Not started |
 
-No tables, Clerk configuration, Supabase project, or application code exist yet.
+No Supabase project, database tables, or iNaturalist features exist yet.
 
 ## Decisions Made (Step 2)
 
@@ -208,6 +210,31 @@ Notes:
 - **Persistence:** rows live in Supabase, so saved items survive signing out and back in, and work on any device.
 - **Snapshot caching:** "My Discoveries" loads with one database query per table instead of one API call per item. It respects iNaturalist's ~60 requests/minute guidance and still shows saved items when the API is down. The trade-off is that cached names or photos may go out of date. Detail pages always load fresh data.
 
+## Authentication (Step 4)
+
+- **Clerk application:** "Wildlife Explorer" (`app_3LHz65bQ9M6e37YnYugjTKjgxNd`), development instance. Sign-in options: username, email, Google. Do not create another Clerk app.
+- **Setup:** the owner ran `npx -y clerk@latest init --app app_3LHz65bQ9M6e37YnYugjTKjgxNd` themselves, which installed `@clerk/nextjs` v7, created `proxy.ts` and the sign-in/sign-up pages, wrapped the layout in `<ClerkProvider>`, wrote the Clerk keys to `.env.local`, and installed Clerk agent skills in `.agents/skills/`.
+- **Environment variables:** the owner manages `.env.local` manually. The agent must never read, display, create, or modify it, including via shell commands or CLI commands that write env files (e.g. `clerk env pull`). Ask the owner to run those.
+- **Verify the integration** with `npx -y clerk@latest doctor` (redact any key-like output).
+
+### Routes
+
+| Route | Access | File |
+|---|---|---|
+| `/` | Public | `app/page.tsx` (placeholder home) |
+| `/sign-in` | Public | `app/sign-in/[[...sign-in]]/page.tsx` |
+| `/sign-up` | Public | `app/sign-up/[[...sign-up]]/page.tsx` |
+| `/discoveries` | **Signed-in only** | `app/discoveries/page.tsx` (placeholder for "My Discoveries") |
+
+### How routes are protected
+
+- `proxy.ts` runs a bare `clerkMiddleware()` so the session is available everywhere. It does **not** decide which routes need auth.
+- Each protected page, Route Handler, and Server Action calls `await auth.protect()` at the top. Signed-out visitors to a page are redirected to `/sign-in?redirect_url=…`. Do not use `createRouteMatcher` (deprecated in `@clerk/nextjs` v7).
+- `next.config.ts` has `cacheComponents: true` (Next.js 16 default), so anything that reads auth (`auth()`, `<Show>`, `<SignIn />`, `<SignUp />`) must sit inside `<Suspense>`, and a page gated by `auth.protect()` needs a `loading.tsx` next to it.
+- Because of streaming, a signed-out request to a protected page returns HTTP 200 with a client-side redirect to sign-in (not a 307). The body contains no protected content.
+- The header (`app/layout.tsx`) uses `<Show when="signed-out">` / `<Show when="signed-in">`: Sign in / Sign up when signed out; My Discoveries, Sign out, and `<UserButton />` when signed in.
+- Clerk only controls who reaches pages. Database-level protection (RLS) arrives in Step 5.
+
 ## API Notes (from Step 1)
 
 - "Not found" returns **HTTP 200** with `total_results: 0` and `results: []`, so check `total_results`, not the status.
@@ -224,3 +251,13 @@ Notes:
 - Do not change this data model without discussion. If a change is agreed, update this file first.
 - Keys go in `.env.local` only, never in code or commits.
 - Do not modify other projects outside the FERA folder.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+## This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->
