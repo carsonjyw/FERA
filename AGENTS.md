@@ -26,7 +26,8 @@ FERA is a web application where users can discover and explore real wildlife fro
 | 4. Add sign-in with Clerk | ✅ Done. See "Authentication (Step 4)" below |
 | 5. Add Supabase and connect it to Clerk | ✅ Done. See "Database & Supabase (Step 5)" below |
 | 6. Where to call the API + core features | ✅ Done. See "iNaturalist Integration & App (Step 6)" below. Owner manually tested auth, exploring, saving (hearts + buttons), notes, removing, and persistence: all passed |
-| 7–8 | Not started |
+| 7. Playwright end-to-end test | ✅ Done. See "End-to-end tests (Step 7)" below and `docs/STEP_7_E2E_TESTING.md` |
+| 8 | Not started |
 
 ## Decisions Made (Step 2)
 
@@ -300,6 +301,17 @@ Owner decisions: say **"Animals"** (not "Species") in all user-facing text (code
 - **Photos render reliably:** `components/photo.tsx` (client) requests decode on load (loaded images could sit unpainted until a repaint), has a failure placeholder, and the first 8 cards load eagerly. Hero images use `components/hero-backdrop.tsx` (no negative z-index; visible base color; gradient for text contrast).
 - **Progressive disclosure:** animal summary shows 4 lines with "Read more" (`components/expandable-text.tsx`).
 - **Accessibility:** hearts and controls are at least 44px tall on touch; icon-only buttons have `aria-label`s; toast region is `role="status"`; keyboard order is skip link, logo, auth, search, then each card link followed by its heart.
+
+## End-to-end tests (Step 7)
+
+Full write-up with the actual results: `docs/STEP_7_E2E_TESTING.md`.
+
+- **Run:** `E2E_USER_A_EMAIL=<a> E2E_USER_B_EMAIL=<b> npx playwright test`. Both users must exist in the Clerk development instance (the owner registers them through `/sign-up`). The emails are passed on the command line, never stored in the repo. The test process reads Clerk keys and Supabase values from `.env.local` at runtime (the agent never reads that file).
+- **Files:** `playwright.config.ts` (serves the built app on port 3100; traces/videos off because they record tokens), `e2e/global-setup.ts` (`clerkSetup()`), `e2e/helpers.ts` (real Clerk sign-in via `@clerk/testing` sign-in tokens, token + REST helpers, the shared `assertIsolation`), `e2e/two-users.spec.ts`, `e2e/rls-experiment.spec.ts`, `e2e/sql/`.
+- **Two-user test:** real Clerk sessions in two browser contexts; each user saves a different animal through the UI and adds a note; checks each sees only their own, persistence after refresh, direct attacks by User B on the real `saved_species` table (read/update/delete/forge all fail), and signed-out redirect. It picks spare animals if a user already has the preferred one saved, and only ever deletes rows it created.
+- **RLS failure experiment:** runs only with `RLS_EXPERIMENT=1`, only against a DISPOSABLE table `rls_experiment_saved_species` (SQL in `e2e/sql/`, not a migration). Sequence performed: pass → weaken disposable policies to `using (true)` → test FAILED ("User B can see User A's rows") → restore → pass → drop table. **Never weaken RLS on `saved_species` or `saved_observations`.** Their security fingerprint was identical before and after.
+- **Rules:** no passwords in tests; no mocked auth; never commit emails, keys, or `test-results/` / `playwright-report/`; to repeat the experiment, recreate the disposable table with `e2e/sql/01-…`, run the sequence, and drop it with `04-…`.
+- `lib/saved.ts` calls `await connection()` first so per-user data is never read during a background prerender.
 
 ## API Notes (from Step 1)
 
