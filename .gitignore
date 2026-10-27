@@ -1,0 +1,10 @@
+# secrets: environment files (keys go in .env.local only)
+.env
+.env.*
+!.env.example
+
+# Claude Code personal settings (the shared .claude/settings.json is committed)
+.claude/settings.local.json
+
+# macOS
+.DS_Store
